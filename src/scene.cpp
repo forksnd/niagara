@@ -737,6 +737,31 @@ bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector
 	return true;
 }
 
+void normalizeIndexOrderForOMM(uint32_t* indices, size_t index_count)
+{
+	for (size_t i = 0; i < index_count; i += 3)
+	{
+		unsigned int a = indices[i + 0], b = indices[i + 1], c = indices[i + 2];
+
+		if (b < a && b < c)
+		{
+			// abc => bca
+			unsigned int t = a;
+			a = b, b = c, c = t;
+		}
+		else if (c < a && c < b)
+		{
+			// abc => cab
+			unsigned int t = c;
+			c = b, b = a, a = t;
+		}
+
+		indices[i + 0] = a;
+		indices[i + 1] = b;
+		indices[i + 2] = c;
+	}
+}
+
 void buildSceneOmm(Geometry& geometry, const std::vector<Material>& materials, const std::vector<MeshDraw>& draws, const std::vector<std::string>& texturePaths, int ommStates, int ommMip)
 {
 	assert(ommStates == 2 || ommStates == 4);
@@ -817,8 +842,10 @@ void buildSceneOmm(Geometry& geometry, const std::vector<Material>& materials, c
 			texcoords[v].y = meshopt_dequantizeHalf(vertex.tv);
 		}
 
-		const uint32_t* indexBuffer = geometry.indices.data() + mesh.lods[0].indexOffset;
+		uint32_t* indexBuffer = geometry.indices.data() + mesh.lods[0].indexOffset;
 		uint32_t triangleCount = mesh.lods[0].indexCount / 3;
+
+		normalizeIndexOrderForOMM(indexBuffer, triangleCount * 3);
 
 		std::vector<unsigned char> measuredLevels(triangleCount, 0);
 		std::vector<unsigned int> measuredSources(triangleCount, 0);

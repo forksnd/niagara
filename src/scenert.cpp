@@ -507,7 +507,7 @@ void fillInstanceRT(VkAccelerationStructureInstanceKHR& instance, const MeshDraw
 	instance.transform.matrix[2][3] = draw.position.z;
 	instance.instanceCustomIndex = instanceIndex;
 	instance.mask = 1 << draw.postPass;
-	instance.flags = draw.postPass ? VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR : VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR;
+	instance.flags = draw.postPass ? 0 : VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR; // keep flags for non-opaque, otherwise OMMs with 2-state forcing break
 	instance.accelerationStructureReference = draw.postPass <= 1 ? blas : 0;
 }
 

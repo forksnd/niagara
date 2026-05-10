@@ -5,6 +5,14 @@
 #extension GL_EXT_shader_8bit_storage: require
 #extension GL_EXT_nonuniform_qualifier: require
 #extension GL_EXT_samplerless_texture_functions: require
+#extension GL_EXT_opacity_micromap: require
+
+/* TODO: for opacity micromaps to work, you probably need to do this:
+#extension GL_EXT_opacity_micromap_ray_query_mode: require
+layout(constant_id = 1) const bool gl_EnableOpacityMicromapEXT = true;
+... however, we can't quite do this yet because glslang version in latest SDK doesn't have this yet,
+and NVidia driver fortunately just works without this enabled anyhow.
+*/
 
 #extension GL_GOOGLE_include_directive: require
 
@@ -144,7 +152,7 @@ void main()
 
 	// On AMDVLK + RDNA3, two shadow traces are faster in practice than one; however, on NV and radv one trace is noticeably faster
 	bool shadowhit = QUALITY == 0
-		? shadowTrace(wpos, dir, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsCullNoOpaqueEXT)
+		? shadowTrace(wpos, dir, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsForceOpacityMicromap2StateEXT)
 		: shadowTraceTransparent(wpos, dir, gl_RayFlagsTerminateOnFirstHitEXT);
 
 	float shadow = shadowhit ? 0.0 : 1.0;

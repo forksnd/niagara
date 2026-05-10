@@ -321,6 +321,15 @@ bool loadSceneCache(const char* path, Geometry& geometry, std::vector<Material>&
 	read(geometry.ommIndices.data(), 1, geometry.ommIndices.size(), file, fileOffset);
 	read(geometry.ommDescs.data(), sizeof(uint32_t), geometry.ommDescs.size(), file, fileOffset);
 
+	for (Mesh& mesh : geometry.meshes)
+		if (mesh.ommIndexData)
+		{
+			uint32_t* indexBuffer = geometry.indices.data() + mesh.lods[0].indexOffset;
+			uint32_t triangleCount = mesh.lods[0].indexCount / 3;
+
+			normalizeIndexOrderForOMM(indexBuffer, triangleCount * 3);
+		}
+
 	for (std::string& path : texturePaths)
 	{
 		char buf[128] = {};
