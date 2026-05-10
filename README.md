@@ -61,6 +61,7 @@ Playlist: https://www.youtube.com/playlist?list=PL0JVLUVCkk-l7CWCn3-cdftR0oajugY
 30. Simplifying synchronization: https://youtu.be/0rqWe1M2HiE
 31. Cooking geometry: https://youtu.be/d04h0sZPwFU
 32. Descriptor heaps: https://youtu.be/VXN4Gewjk4k
+33. Opacity micromaps: https://youtu.be/gVIHXWI1BQY
 
 # Issues
 
