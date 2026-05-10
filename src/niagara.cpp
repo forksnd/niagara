@@ -534,6 +534,7 @@ int main(int argc, const char** argv)
 	bool raytracingSupported = false;
 	bool clusterrtSupported = false;
 	bool descheapSupported = false;
+	bool ommSupported = false;
 	bool unifiedlayoutsSupported = false;
 
 	for (auto& ext : extensions)
@@ -548,6 +549,10 @@ int main(int argc, const char** argv)
 
 #ifdef VK_EXT_descriptor_heap
 		descheapSupported = descheapSupported || strcmp(ext.extensionName, VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME) == 0;
+#endif
+
+#ifdef VK_KHR_opacity_micromap
+		ommSupported = ommSupported || strcmp(ext.extensionName, VK_KHR_OPACITY_MICROMAP_EXTENSION_NAME) == 0;
 #endif
 	}
 
@@ -585,7 +590,7 @@ int main(int argc, const char** argv)
 	uint32_t familyIndex = getGraphicsFamilyIndex(physicalDevice);
 	assert(familyIndex != VK_QUEUE_FAMILY_IGNORED);
 
-	VkDevice device = createDevice(instance, physicalDevice, familyIndex, meshShadingSupported, raytracingSupported, clusterrtSupported, descheapSupported);
+	VkDevice device = createDevice(instance, physicalDevice, familyIndex, meshShadingSupported, raytracingSupported, clusterrtSupported, descheapSupported, ommSupported);
 	assert(device);
 
 	volkLoadDevice(device);
@@ -819,7 +824,7 @@ int main(int argc, const char** argv)
 	bool clrtMode = getenv("CLRT") && atoi(getenv("CLRT"));
 	bool compressed = !getenv("COMPRESSED") || atoi(getenv("COMPRESSED")); // enabled by default
 	bool verbose = getenv("VERBOSE") && atoi(getenv("VERBOSE"));
-	int ommStates = getenv("OMM") ? atoi(getenv("OMM")) : 0;
+	int ommStates = getenv("OMM") ? atoi(getenv("OMM")) : 4; // enabled by default
 
 	if (argc == 2)
 	{
@@ -1061,6 +1066,8 @@ int main(int argc, const char** argv)
 
 	uploadBuffer(device, initCommandPool, initCommandBuffer, queue, db, scratch, draws.data(), draws.size() * sizeof(MeshDraw));
 
+	VkAccelerationStructureKHR omm = nullptr;
+	Buffer ommBuffer = {};
 	std::vector<VkAccelerationStructureKHR> blas;
 	std::vector<VkDeviceAddress> blasAddresses;
 	VkAccelerationStructureKHR tlas = nullptr;
@@ -1071,6 +1078,16 @@ int main(int argc, const char** argv)
 	Buffer tlasInstanceBuffer = {};
 	if (raytracingSupported)
 	{
+		Buffer ommixb = {};
+
+		if (geometry.ommStates && ommSupported)
+		{
+			omm = createOMM(device, ommBuffer, geometry.ommStates, geometry.ommData, geometry.ommDescs, initCommandPool, initCommandBuffer, queue, memoryProperties);
+
+			createBuffer(ommixb, device, memoryProperties, geometry.ommIndices.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+			memcpy(ommixb.data, geometry.ommIndices.data(), geometry.ommIndices.size());
+		}
+
 		if (clusterrtSupported && clrtMode)
 		{
 			Buffer vxb = {};
@@ -1084,7 +1101,7 @@ int main(int argc, const char** argv)
 		else
 		{
 			std::vector<VkDeviceSize> compactedSizes;
-			buildBLAS(device, geometry.meshes, vb, ib, blas, compactedSizes, blasBuffer, initCommandPool, initCommandBuffer, queue, memoryProperties);
+			buildBLAS(device, geometry.meshes, vb, ib, omm, ommixb, blas, compactedSizes, blasBuffer, initCommandPool, initCommandBuffer, queue, memoryProperties);
 			compactBLAS(device, blas, compactedSizes, blasBuffer, initCommandPool, initCommandBuffer, queue, memoryProperties);
 		}
 
@@ -1112,6 +1129,9 @@ int main(int argc, const char** argv)
 		}
 
 		tlas = createTLAS(device, tlasBuffer, tlasScratchBuffer, tlasInstanceBuffer, draws.size(), memoryProperties);
+
+		if (omm)
+			destroyBuffer(ommixb, device);
 	}
 
 	// Make sure we don't accidentally reuse the init command pool because that would require extra synchronization
@@ -2077,6 +2097,12 @@ int main(int argc, const char** argv)
 		destroyBuffer(blasBuffer, device);
 		destroyBuffer(tlasScratchBuffer, device);
 		destroyBuffer(tlasInstanceBuffer, device);
+
+		if (omm)
+		{
+			vkDestroyAccelerationStructureKHR(device, omm, 0);
+			destroyBuffer(ommBuffer, device);
+		}
 	}
 
 	destroyBuffer(ib, device);

@@ -746,6 +746,7 @@ void buildSceneOmm(Geometry& geometry, const std::vector<Material>& materials, c
 
 	for (const MeshDraw& draw : draws)
 	{
+		// we only need OMMs for transparent meshes
 		if (draw.postPass != 1)
 			continue;
 
@@ -753,6 +754,7 @@ void buildSceneOmm(Geometry& geometry, const std::vector<Material>& materials, c
 		if (textureIndex < 0)
 			continue;
 
+		// ensure consistent mesh -> texture mapping
 		uint32_t meshIndex = draw.meshIndex;
 		if (meshTexture[meshIndex] == -1)
 			meshTexture[meshIndex] = textureIndex;

@@ -11,12 +11,17 @@
 const VkBuildAccelerationStructureFlagsKHR kBuildBLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
 const VkBuildAccelerationStructureFlagsKHR kBuildCLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
 const VkBuildAccelerationStructureFlagsKHR kBuildTLAS = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+const VkBuildAccelerationStructureFlagsKHR kBuildOMM = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
 
-void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& vb, const Buffer& ib, std::vector<VkAccelerationStructureKHR>& blas, std::vector<VkDeviceSize>& compactedSizes, Buffer& blasBuffer, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
+void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& vb, const Buffer& ib, VkAccelerationStructureKHR omm, const Buffer& ommixb, std::vector<VkAccelerationStructureKHR>& blas, std::vector<VkDeviceSize>& compactedSizes, Buffer& blasBuffer, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
 {
 	std::vector<uint32_t> primitiveCounts(meshes.size());
 	std::vector<VkAccelerationStructureGeometryKHR> geometries(meshes.size());
 	std::vector<VkAccelerationStructureBuildGeometryInfoKHR> buildInfos(meshes.size());
+
+#if VK_KHR_opacity_micromap
+	std::vector<VkAccelerationStructureTrianglesOpacityMicromapKHR> geometriesOMM(meshes.size());
+#endif
 
 	const size_t kAlignment = 256;                   // required by spec for acceleration structures, could be smaller for scratch but it's a small waste
 	const size_t kDefaultScratch = 32 * 1024 * 1024; // 32 MB scratch by default
@@ -31,6 +36,7 @@ void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& v
 
 	VkDeviceAddress vbAddress = getBufferAddress(vb, device);
 	VkDeviceAddress ibAddress = getBufferAddress(ib, device);
+	VkDeviceAddress ommixbAddress = omm ? getBufferAddress(ommixb, device) : 0;
 
 	for (size_t i = 0; i < meshes.size(); ++i)
 	{
@@ -54,6 +60,27 @@ void buildBLAS(VkDevice device, const std::vector<Mesh>& meshes, const Buffer& v
 		geo.geometry.triangles.maxVertex = mesh.vertexCount - 1;
 		geo.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
 		geo.geometry.triangles.indexData.deviceAddress = ibAddress + mesh.lods[lodIndex].indexOffset * sizeof(uint32_t);
+
+#if VK_KHR_opacity_micromap
+		if (omm && mesh.ommIndexData)
+		{
+			VkAccelerationStructureTrianglesOpacityMicromapKHR& geoOMM = geometriesOMM[i];
+
+			geo.geometry.triangles.pNext = &geoOMM;
+
+			uint32_t ommIndexType = mesh.ommIndexData & 3;
+			assert(ommIndexType > 0);
+
+			geoOMM.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_KHR;
+			geoOMM.indexType = (ommIndexType == 1) ? VK_INDEX_TYPE_UINT8 : (ommIndexType == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+			geoOMM.indexBuffer = ommixbAddress + (mesh.ommIndexData >> 2);
+			geoOMM.indexStride = 1 << (ommIndexType - 1);
+			geoOMM.baseTriangle = mesh.ommIndexBase;
+			geoOMM.micromap = omm;
+		}
+#else
+		assert(!omm);
+#endif
 
 		buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
 		buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
@@ -543,4 +570,121 @@ void buildTLAS(VkDevice device, VkCommandBuffer commandBuffer, VkAccelerationStr
 	vkCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &buildInfo, &buildRangePtr);
 
 	stageBarrier(commandBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+}
+
+VkAccelerationStructureKHR createOMM(VkDevice device, Buffer& ommBuffer, uint32_t ommStates, const std::vector<uint8_t>& ommData, const std::vector<uint32_t>& ommDescs, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
+{
+#if VK_KHR_opacity_micromap
+	uint32_t usageCounts[16] = {};
+	for (uint32_t desc : ommDescs)
+		usageCounts[desc & 15]++;
+
+	assert(ommStates == 2 || ommStates == 4);
+	VkOpacityMicromapFormatKHR ommFormat = ommStates == 2 ? VK_OPACITY_MICROMAP_FORMAT_2_STATE_KHR : VK_OPACITY_MICROMAP_FORMAT_4_STATE_KHR;
+
+	VkMicromapUsageKHR usages[16] = {};
+	uint32_t usageCountsCount = 0;
+	for (int i = 0; i < 16; ++i)
+		if (usageCounts[i])
+		{
+			usages[usageCountsCount].count = usageCounts[i];
+			usages[usageCountsCount].subdivisionLevel = i;
+			usages[usageCountsCount].format = ommFormat;
+			usageCountsCount++;
+		}
+
+	VkAccelerationStructureGeometryMicromapDataKHR ommg = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_MICROMAP_DATA_KHR };
+	ommg.usageCountsCount = usageCountsCount;
+	ommg.pUsageCounts = usages;
+
+	VkAccelerationStructureGeometryKHR geometry = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
+	geometry.pNext = &ommg;
+	geometry.geometryType = VK_GEOMETRY_TYPE_MICROMAP_KHR;
+
+	VkAccelerationStructureBuildGeometryInfoKHR buildInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR };
+	buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_OPACITY_MICROMAP_KHR;
+	buildInfo.flags = kBuildOMM;
+	buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+	buildInfo.geometryCount = 1;
+	buildInfo.pGeometries = &geometry;
+
+	uint32_t primitiveCount = 1;
+
+	VkAccelerationStructureBuildSizesInfoKHR sizeInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+	vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, &primitiveCount, &sizeInfo);
+
+	printf("OMM accelerationStructureSize: %.2f MB, scratchSize: %.2f MB\n", double(sizeInfo.accelerationStructureSize) / 1e6, double(sizeInfo.buildScratchSize) / 1e6);
+
+	Buffer scratchBuffer;
+	if (sizeInfo.buildScratchSize)
+		createBuffer(scratchBuffer, device, memoryProperties, sizeInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	Buffer inputBuffer;
+	createBuffer(inputBuffer, device, memoryProperties, ommDescs.size() * sizeof(VkMicromapTriangleKHR) + ommData.size(), VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+	ommg.data = getBufferAddress(inputBuffer, device) + ommDescs.size() * sizeof(VkMicromapTriangleKHR);
+	ommg.triangleArray = getBufferAddress(inputBuffer, device);
+	ommg.triangleArrayStride = sizeof(VkMicromapTriangleKHR);
+
+	VkMicromapTriangleKHR* trianglePtr = static_cast<VkMicromapTriangleKHR*>(inputBuffer.data);
+
+	for (size_t i = 0; i < ommDescs.size(); ++i)
+	{
+		uint32_t desc = ommDescs[i];
+
+		VkMicromapTriangleKHR triangle = {};
+		triangle.dataOffset = desc >> 4;
+		triangle.subdivisionLevel = desc & 15;
+		triangle.format = ommFormat;
+
+		trianglePtr[i] = triangle;
+	}
+
+	memcpy(static_cast<char*>(inputBuffer.data) + ommDescs.size() * sizeof(VkMicromapTriangleKHR), ommData.data(), ommData.size());
+
+	createBuffer(ommBuffer, device, memoryProperties, sizeInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	VkAccelerationStructureCreateInfoKHR accelerationInfo = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
+	accelerationInfo.buffer = ommBuffer.buffer;
+	accelerationInfo.size = sizeInfo.accelerationStructureSize;
+	accelerationInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_OPACITY_MICROMAP_KHR;
+
+	VkAccelerationStructureKHR omm = nullptr;
+	VK_CHECK(vkCreateAccelerationStructureKHR(device, &accelerationInfo, nullptr, &omm));
+
+	buildInfo.dstAccelerationStructure = omm;
+	if (sizeInfo.buildScratchSize)
+		buildInfo.scratchData.deviceAddress = getBufferAddress(scratchBuffer, device);
+
+	VK_CHECK(vkResetCommandPool(device, commandPool, 0));
+
+	VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+	VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+	VkAccelerationStructureBuildRangeInfoKHR buildRange = {};
+	buildRange.primitiveCount = primitiveCount;
+	const VkAccelerationStructureBuildRangeInfoKHR* buildRangePtr = &buildRange;
+
+	vkCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &buildInfo, &buildRangePtr);
+
+	VK_CHECK(vkEndCommandBuffer(commandBuffer));
+
+	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &commandBuffer;
+
+	VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+	VK_CHECK(vkDeviceWaitIdle(device));
+
+	destroyBuffer(inputBuffer, device);
+
+	if (sizeInfo.buildScratchSize)
+		destroyBuffer(scratchBuffer, device);
+
+	return omm;
+#else
+	return nullptr;
+#endif
 }

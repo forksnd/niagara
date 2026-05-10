@@ -247,7 +247,7 @@ VkPhysicalDevice pickPhysicalDevice(VkPhysicalDevice* physicalDevices, uint32_t 
 	return result;
 }
 
-VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool meshShadingSupported, bool raytracingSupported, bool clusterrtSupported, bool descheapSupported)
+VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint32_t familyIndex, bool meshShadingSupported, bool raytracingSupported, bool clusterrtSupported, bool descheapSupported, bool ommSupported)
 {
 	float queuePriorities[] = { 1.0f };
 
@@ -278,6 +278,11 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 #ifdef VK_EXT_descriptor_heap
 	if (descheapSupported)
 		extensions.push_back(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
+#endif
+
+#ifdef VK_KHR_opacity_micromap
+	if (ommSupported)
+		extensions.push_back(VK_KHR_OPACITY_MICROMAP_EXTENSION_NAME);
 #endif
 
 	VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
@@ -345,6 +350,12 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	featuresDescriptorHeap.descriptorHeap = true;
 #endif
 
+#if VK_KHR_opacity_micromap
+	// This will only be used if ommSupported=true (see below)
+	VkPhysicalDeviceOpacityMicromapFeaturesKHR featuresOMM = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_KHR };
+	featuresOMM.micromap = true;
+#endif
+
 	VkDeviceCreateInfo createInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 	createInfo.queueCreateInfoCount = 1;
 	createInfo.pQueueCreateInfos = &queueInfo;
@@ -386,6 +397,14 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	{
 		*ppNext = &featuresDescriptorHeap;
 		ppNext = &featuresDescriptorHeap.pNext;
+	}
+#endif
+
+#if VK_KHR_opacity_micromap
+	if (ommSupported)
+	{
+		*ppNext = &featuresOMM;
+		ppNext = &featuresOMM.pNext;
 	}
 #endif
 
