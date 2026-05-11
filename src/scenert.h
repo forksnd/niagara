@@ -17,4 +17,4 @@ VkAccelerationStructureKHR createTLAS(VkDevice device, Buffer& tlasBuffer, Buffe
 
 void buildTLAS(VkDevice device, VkCommandBuffer commandBuffer, VkAccelerationStructureKHR tlas, const Buffer& tlasBuffer, const Buffer& scratchBuffer, const Buffer& instanceBuffer, uint32_t primitiveCount, VkBuildAccelerationStructureModeKHR mode);
 
-VkAccelerationStructureKHR createOMM(VkDevice device, Buffer& ommBuffer, uint32_t ommStates, const std::vector<uint8_t>& ommData, const std::vector<uint32_t>& ommDescs, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties);
+VkAccelerationStructureKHR buildOMM(VkDevice device, Buffer& ommBuffer, uint32_t ommStates, const std::vector<uint8_t>& ommData, const std::vector<uint32_t>& ommDescs, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties);

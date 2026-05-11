@@ -1080,9 +1080,9 @@ int main(int argc, const char** argv)
 	{
 		Buffer ommixb = {};
 
-		if (geometry.ommStates && ommSupported)
+		if (geometry.ommDescs.size() && ommSupported)
 		{
-			omm = createOMM(device, ommBuffer, geometry.ommStates, geometry.ommData, geometry.ommDescs, initCommandPool, initCommandBuffer, queue, memoryProperties);
+			omm = buildOMM(device, ommBuffer, geometry.ommStates, geometry.ommData, geometry.ommDescs, initCommandPool, initCommandBuffer, queue, memoryProperties);
 
 			createBuffer(ommixb, device, memoryProperties, geometry.ommIndices.size(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | raytracingBufferFlags, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 			memcpy(ommixb.data, geometry.ommIndices.data(), geometry.ommIndices.size());
@@ -1104,6 +1104,9 @@ int main(int argc, const char** argv)
 			buildBLAS(device, geometry.meshes, vb, ib, omm, ommixb, blas, compactedSizes, blasBuffer, initCommandPool, initCommandBuffer, queue, memoryProperties);
 			compactBLAS(device, blas, compactedSizes, blasBuffer, initCommandPool, initCommandBuffer, queue, memoryProperties);
 		}
+
+		if (omm)
+			destroyBuffer(ommixb, device);
 
 		blasAddresses.resize(blas.size());
 
@@ -1129,9 +1132,6 @@ int main(int argc, const char** argv)
 		}
 
 		tlas = createTLAS(device, tlasBuffer, tlasScratchBuffer, tlasInstanceBuffer, draws.size(), memoryProperties);
-
-		if (omm)
-			destroyBuffer(ommixb, device);
 	}
 
 	// Make sure we don't accidentally reuse the init command pool because that would require extra synchronization

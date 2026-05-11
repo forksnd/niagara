@@ -572,7 +572,7 @@ void buildTLAS(VkDevice device, VkCommandBuffer commandBuffer, VkAccelerationStr
 	stageBarrier(commandBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 }
 
-VkAccelerationStructureKHR createOMM(VkDevice device, Buffer& ommBuffer, uint32_t ommStates, const std::vector<uint8_t>& ommData, const std::vector<uint32_t>& ommDescs, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
+VkAccelerationStructureKHR buildOMM(VkDevice device, Buffer& ommBuffer, uint32_t ommStates, const std::vector<uint8_t>& ommData, const std::vector<uint32_t>& ommDescs, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue, const VkPhysicalDeviceMemoryProperties& memoryProperties)
 {
 #if VK_KHR_opacity_micromap
 	uint32_t usageCounts[16] = {};
@@ -616,8 +616,7 @@ VkAccelerationStructureKHR createOMM(VkDevice device, Buffer& ommBuffer, uint32_
 	printf("OMM accelerationStructureSize: %.2f MB, scratchSize: %.2f MB\n", double(sizeInfo.accelerationStructureSize) / 1e6, double(sizeInfo.buildScratchSize) / 1e6);
 
 	Buffer scratchBuffer;
-	if (sizeInfo.buildScratchSize)
-		createBuffer(scratchBuffer, device, memoryProperties, sizeInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	createBuffer(scratchBuffer, device, memoryProperties, sizeInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
 	Buffer inputBuffer;
 	createBuffer(inputBuffer, device, memoryProperties, ommDescs.size() * sizeof(VkMicromapTriangleKHR) + ommData.size(), VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -653,8 +652,7 @@ VkAccelerationStructureKHR createOMM(VkDevice device, Buffer& ommBuffer, uint32_
 	VK_CHECK(vkCreateAccelerationStructureKHR(device, &accelerationInfo, nullptr, &omm));
 
 	buildInfo.dstAccelerationStructure = omm;
-	if (sizeInfo.buildScratchSize)
-		buildInfo.scratchData.deviceAddress = getBufferAddress(scratchBuffer, device);
+	buildInfo.scratchData.deviceAddress = getBufferAddress(scratchBuffer, device);
 
 	VK_CHECK(vkResetCommandPool(device, commandPool, 0));
 
@@ -679,9 +677,7 @@ VkAccelerationStructureKHR createOMM(VkDevice device, Buffer& ommBuffer, uint32_
 	VK_CHECK(vkDeviceWaitIdle(device));
 
 	destroyBuffer(inputBuffer, device);
-
-	if (sizeInfo.buildScratchSize)
-		destroyBuffer(scratchBuffer, device);
+	destroyBuffer(scratchBuffer, device);
 
 	return omm;
 #else

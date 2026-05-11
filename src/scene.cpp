@@ -737,7 +737,7 @@ bool loadScene(Geometry& geometry, std::vector<Material>& materials, std::vector
 	return true;
 }
 
-void normalizeIndexOrderForOMM(uint32_t* indices, size_t index_count)
+void normalizeIndicesForOMM(uint32_t* indices, size_t index_count)
 {
 	for (size_t i = 0; i < index_count; i += 3)
 	{
@@ -845,7 +845,7 @@ void buildSceneOmm(Geometry& geometry, const std::vector<Material>& materials, c
 		uint32_t* indexBuffer = geometry.indices.data() + mesh.lods[0].indexOffset;
 		uint32_t triangleCount = mesh.lods[0].indexCount / 3;
 
-		normalizeIndexOrderForOMM(indexBuffer, triangleCount * 3);
+		normalizeIndicesForOMM(indexBuffer, triangleCount * 3);
 
 		std::vector<unsigned char> measuredLevels(triangleCount, 0);
 		std::vector<unsigned int> measuredSources(triangleCount, 0);
