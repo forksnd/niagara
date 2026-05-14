@@ -551,7 +551,7 @@ int main(int argc, const char** argv)
 		descheapSupported = descheapSupported || strcmp(ext.extensionName, VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME) == 0;
 #endif
 
-#ifdef VK_KHR_opacity_micromap
+#if defined(VK_KHR_opacity_micromap) && (defined(NDEBUG) && !CONFIG_RELVAL)
 		ommSupported = ommSupported || strcmp(ext.extensionName, VK_KHR_OPACITY_MICROMAP_EXTENSION_NAME) == 0;
 #endif
 	}
@@ -564,6 +564,21 @@ int main(int argc, const char** argv)
 
 	if (descheapSupported)
 		printf("WARNING: EXT_descriptor_heap support code is being used\n");
+
+	if (meshShadingSupported)
+	{
+		VkPhysicalDeviceMeshShaderFeaturesEXT featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
+		VkPhysicalDeviceFeatures2 features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+		features.pNext = &featuresMesh;
+
+		vkGetPhysicalDeviceFeatures2(physicalDevice, &features);
+
+		if (!featuresMesh.meshShaderQueries)
+		{
+			printf("WARNING: EXT_mesh_shader support is incomplete; disabling mesh shading\n");
+			meshShadingSupported = false;
+		}
+	}
 
 	meshShadingEnabled = meshShadingSupported;
 
@@ -747,12 +762,15 @@ int main(int argc, const char** argv)
 
 	VkQueryPool queryPoolsTimestamp[MAX_FRAMES] = {};
 	VkQueryPool queryPoolsPipeline[MAX_FRAMES] = {};
+	VkQueryPool queryPoolsMesh[MAX_FRAMES] = {};
 
 	for (int i = 0; i < MAX_FRAMES; ++i)
 	{
 		queryPoolsTimestamp[i] = createQueryPool(device, 128, VK_QUERY_TYPE_TIMESTAMP);
 		queryPoolsPipeline[i] = createQueryPool(device, 4, VK_QUERY_TYPE_PIPELINE_STATISTICS);
-		assert(queryPoolsTimestamp[i] && queryPoolsPipeline[i]);
+		if (meshShadingSupported)
+			queryPoolsMesh[i] = createQueryPool(device, 4, VK_QUERY_TYPE_MESH_PRIMITIVES_GENERATED_EXT);
+		assert(queryPoolsTimestamp[i] && queryPoolsPipeline[i] && (!meshShadingSupported || queryPoolsMesh[i]));
 	}
 
 	VkCommandPool commandPools[MAX_FRAMES] = {};
@@ -1193,6 +1211,7 @@ int main(int argc, const char** argv)
 
 	uint64_t timestampResults[25] = {};
 	uint64_t pipelineResults[3] = {};
+	bool pipelineResultsMesh[MAX_FRAMES] = {};
 
 	while (!glfwWindowShouldClose(window))
 	{
@@ -1387,6 +1406,7 @@ int main(int argc, const char** argv)
 
 		VkQueryPool queryPoolTimestamp = queryPoolsTimestamp[frameIndex % MAX_FRAMES];
 		VkQueryPool queryPoolPipeline = queryPoolsPipeline[frameIndex % MAX_FRAMES];
+		VkQueryPool queryPoolMesh = queryPoolsMesh[frameIndex % MAX_FRAMES];
 
 		uint32_t imageIndex = 0;
 		VkResult acquireResult = vkAcquireNextImageKHR(device, swapchain.swapchain, ~0ull, acquireSemaphore, VK_NULL_HANDLE, &imageIndex);
@@ -1481,13 +1501,16 @@ int main(int argc, const char** argv)
 		globals.screenWidth = float(swapchain.width);
 		globals.screenHeight = float(swapchain.height);
 
-		bool taskSubmit = meshShadingSupported && meshShadingEnabled; // TODO; refactor this to be false when taskShadingEnabled is false
-		bool clusterSubmit = meshShadingSupported && meshShadingEnabled && !taskShadingEnabled;
+		bool meshSubmit = meshShadingSupported && meshShadingEnabled;
+		bool clusterSubmit = meshSubmit && !taskShadingEnabled;
+
+		VkQueryPool queryPoolPrimitives = meshSubmit ? queryPoolMesh : queryPoolPipeline;
+		pipelineResultsMesh[frameIndex % MAX_FRAMES] = meshSubmit;
 
 		auto cull = [&](VkPipeline pipeline, uint32_t timestamp, const char* phase, bool late, unsigned int postPass = 0)
 		{
 			uint32_t rasterizationStage =
-			    taskSubmit
+			    meshSubmit
 			        ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TASK_SHADER_BIT_EXT | VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT
 			        : VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
@@ -1513,7 +1536,7 @@ int main(int argc, const char** argv)
 				dispatch(commandBuffer, framedesc, drawcullProgram, uint32_t(draws.size()), 1, passData, descriptors);
 			}
 
-			if (taskSubmit)
+			if (meshSubmit)
 			{
 				stageBarrier(commandBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 
@@ -1534,7 +1557,7 @@ int main(int argc, const char** argv)
 		{
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 0);
 
-			vkCmdBeginQuery(commandBuffer, queryPoolPipeline, query, 0);
+			vkCmdBeginQuery(commandBuffer, queryPoolPrimitives, query, 0);
 
 			if (clusterSubmit)
 			{
@@ -1620,7 +1643,7 @@ int main(int argc, const char** argv)
 				pushConstants(commandBuffer, framedesc, clusterProgram, passGlobals);
 				vkCmdDrawMeshTasksIndirectEXT(commandBuffer, ccb.buffer, 4, 1, 0);
 			}
-			else if (taskSubmit)
+			else if (meshSubmit)
 			{
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, postPass >= 1 ? meshtaskpostPipeline : late ? meshtasklatePipeline
 				                                                                                                              : meshtaskPipeline);
@@ -1652,7 +1675,7 @@ int main(int argc, const char** argv)
 
 			vkCmdEndRendering(commandBuffer);
 
-			vkCmdEndQuery(commandBuffer, queryPoolPipeline, query);
+			vkCmdEndQuery(commandBuffer, queryPoolPrimitives, query);
 
 			vkCmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, queryPoolTimestamp, timestamp + 1);
 		};
@@ -1714,13 +1737,13 @@ int main(int argc, const char** argv)
 		    { swapchain.images[imageIndex], depthPyramid.image, shadowTarget.image, shadowblurTarget.image, bloomTarget.image, gbufferTargets[0].image, gbufferTargets[1].image },
 		    { depthTarget.image });
 
-		vkCmdResetQueryPool(commandBuffer, queryPoolPipeline, 0, 4);
+		vkCmdResetQueryPool(commandBuffer, queryPoolPrimitives, 0, 4);
 
 		VkClearColorValue colorClear = { 135.f / 255.f, 206.f / 255.f, 250.f / 255.f, 15.f / 255.f };
 		VkClearDepthStencilValue depthClear = { 0.f, 0 };
 
 		// early cull: frustum cull & fill objects that *were* visible last frame
-		cull(taskSubmit ? taskcullPipeline : drawcullPipeline, 2, "early cull", /* late= */ false);
+		cull(meshSubmit ? taskcullPipeline : drawcullPipeline, 2, "early cull", /* late= */ false);
 
 		// early render: render objects that were visible last frame
 		render(/* late= */ false, colorClear, depthClear, 0, 4, "early render");
@@ -1729,7 +1752,7 @@ int main(int argc, const char** argv)
 		pyramid(6);
 
 		// late cull: frustum + occlusion cull & fill objects that were *not* visible last frame
-		cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 8, "late cull", /* late= */ true);
+		cull(meshSubmit ? taskculllatePipeline : drawculllatePipeline, 8, "late cull", /* late= */ true);
 
 		// late render: render objects that are visible this frame but weren't drawn in the early pass
 		render(/* late= */ true, colorClear, depthClear, 1, 10, "late render");
@@ -1738,7 +1761,7 @@ int main(int argc, const char** argv)
 		if (meshPostPasses >> 1)
 		{
 			// post cull: frustum + occlusion cull & fill extra objects
-			cull(taskSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "post cull", /* late= */ true, /* postPass= */ 1);
+			cull(meshSubmit ? taskculllatePipeline : drawculllatePipeline, 12, "post cull", /* late= */ true, /* postPass= */ 1);
 
 			// post render: render extra objects
 			render(/* late= */ true, colorClear, depthClear, 2, 14, "post render", /* postPass= */ 1);
@@ -1958,7 +1981,7 @@ int main(int argc, const char** argv)
 				debugtext(7, ~0u, "frustum culling %s, occlusion culling %s, level-of-detail %s",
 				    cullingEnabled ? "ON" : "OFF", occlusionEnabled ? "ON" : "OFF", lodEnabled ? "ON" : "OFF");
 				debugtext(8, ~0u, "mesh shading %s, task shading %s, cluster occlusion culling %s",
-				    taskSubmit ? "ON" : "OFF", taskSubmit && taskShadingEnabled ? "ON" : "OFF",
+				    meshSubmit ? "ON" : "OFF", meshSubmit && taskShadingEnabled ? "ON" : "OFF",
 				    clusterOcclusionEnabled ? "ON" : "OFF");
 
 				debugtext(10, ~0u, "RT shadows: %s, blur %s, quality %d, checkerboard %s",
@@ -2011,7 +2034,8 @@ int main(int argc, const char** argv)
 			VK_CHECK(vkResetFences(device, 1, &waitFence));
 
 			VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolsTimestamp[waitIndex], 0, COUNTOF(timestampResults), sizeof(timestampResults), timestampResults, sizeof(timestampResults[0]), VK_QUERY_RESULT_64_BIT));
-			VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolsPipeline[waitIndex], 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT));
+			VkQueryPool queryPoolPrimitivesResults = pipelineResultsMesh[waitIndex] ? queryPoolsMesh[waitIndex] : queryPoolsPipeline[waitIndex];
+			VK_CHECK_QUERY(vkGetQueryPoolResults(device, queryPoolPrimitivesResults, 0, COUNTOF(pipelineResults), sizeof(pipelineResults), pipelineResults, sizeof(pipelineResults[0]), VK_QUERY_RESULT_64_BIT));
 
 			double frameGpuBegin = double(timestampResults[0]) * props.limits.timestampPeriod * 1e-6;
 			double frameGpuEnd = double(timestampResults[1]) * props.limits.timestampPeriod * 1e-6;
@@ -2122,6 +2146,9 @@ int main(int argc, const char** argv)
 		vkDestroyQueryPool(device, pool, 0);
 	for (VkQueryPool pool : queryPoolsPipeline)
 		vkDestroyQueryPool(device, pool, 0);
+	for (VkQueryPool pool : queryPoolsMesh)
+		if (pool)
+			vkDestroyQueryPool(device, pool, 0);
 
 	for (VkSemaphore semaphore : presentSemaphores)
 		vkDestroySemaphore(device, semaphore, 0);

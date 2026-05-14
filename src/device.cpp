@@ -331,6 +331,7 @@ VkDevice createDevice(VkInstance instance, VkPhysicalDevice physicalDevice, uint
 	VkPhysicalDeviceMeshShaderFeaturesEXT featuresMesh = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
 	featuresMesh.taskShader = true;
 	featuresMesh.meshShader = true;
+	featuresMesh.meshShaderQueries = true;
 
 	// This will only be used if raytracingSupported=true (see below)
 	VkPhysicalDeviceRayQueryFeaturesKHR featuresRayQueries = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR };
